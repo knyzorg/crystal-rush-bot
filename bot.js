@@ -11,13 +11,21 @@ const DUMMY_POSITION = {
     y: Infinity
 }
 
-const oreCache = Array(30).fill(0).map(() => Array(15).fill('?'));
 
+const allPositions = [];
+for (let x = 0; x < 30; x++) {
+    for (let y = 0; x < 15; y++) {
+        allPositions.push({ x, y })
+    }
+}
+const oreGrid = Array(30).fill(0).map(() => Array(15).fill('?'));
 const riskFactor = Array(30).fill(0).map(() => Array(15).fill(1));
 const holeGrid = Array(30).fill(0).map(() => Array(15));
 const radarGrid = Array(30).fill(0).map(() => Array(15));
-
+const dangerBot = new Set();
 let previousEnemyPositions = new Map();
+
+let exploration = -1;
 
 function getDistance(a, b) {
     return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
@@ -27,30 +35,46 @@ function findNearest(start, coords) {
     let target = DUMMY_POSITION;
     let currentRisk = Infinity;
 
+    console.error("Picking from", coords);
     for (let end of coords) {
         const newDistance = getDistance(start, end);
         const newRisk = riskFactor[end.x][end.y];
         const oldRisk = currentRisk;
         const oldDistance = getDistance(start, target);
 
-        if ((newRisk < oldRisk && newRisk != Infinity) || (newRisk == oldRisk && newDistance < oldDistance)) { 
-            target = end; 
+        // Priority 1: lower risk
+        if (newRisk == Infinity) continue;
+        if (newRisk < oldRisk) {
+            target = end;
             currentRisk = newRisk;
             continue;
         };
+        // Priority 2: not a hole, but previous one is
+        if (newRisk == oldRisk && !holeGrid[end.x][end.y] && holeGrid[target.x][target.y]) {
+            target = end;
+            currentRisk = newRisk;
+            continue;
+        }
+        // Priority 3: lowest distance
+        if (newRisk == oldRisk && newDistance < oldDistance) {
+            target = end;
+            currentRisk = newRisk;
+            continue;
+        }
     }
-    console.error(target, "with risk", currentRisk);
+    console.error("Selected", target, "with risk", currentRisk);
     return target;
 }
 const radarSpots = [];
-for (let x = 7; x < width; x += 7) {
-    for (let y = 5; y < height; y += 7) {
+for (let x = 7; x < width; x += 6) {
+    for (let y = 4; y < height; y += 4) {
         radarSpots.push({
             x, y
         });
     }
 }
 
+radarSpots.sort((a, b) => Math.abs(15 - b.x) - Math.abs(15 - a.x))
 // game loop
 while (true) {
     var inputs = readline().split(' ');
@@ -70,16 +94,18 @@ while (true) {
 
 
             if (hole) {
-                 if (!holeGrid[x][y]) 
+                if (!holeGrid[x][y])
                     changeGrid[x][y] = true;
-                 holeGrid[x][y] = true 
+                holeGrid[x][y] = true
             }
 
             if (ore != '?') {
-                 if (oreCache[x][y] != ore && oreCache[x][y] != '?') 
+                if (oreGrid[x][y] != ore && oreGrid[x][y] != '?')
                     changeGrid[x][y] = true;
+            } else {
+                //console.error(`Unknown ore ${x} ${y}`)
             }
-            oreCache[x][y] = ore;
+            oreGrid[x][y] = ore;
 
             if (ore != '?' && ore != 0) {
                 ores.push({
@@ -115,10 +141,12 @@ while (true) {
             radarGrid[x][y] = true;
         }
 
-        if (entityType == 0)
+        if (entityType == 0) {
+            exploration = Math.max(exploration, x);
             bots.push({
                 x, y, item, entityId
             })
+        }
 
         // Enemy
         if (entityType == 1) {
@@ -128,31 +156,43 @@ while (true) {
             if (x == -1 && y == -1) continue;
             // has not moved
             if (oldX == x && oldY == y) {
+                if (x == 0) {
+                    dangerBot.add(entityId);
+                    continue;
+                }
+                if (!dangerBot.has(entityId)) continue;
+                dangerBot.delete(entityId);
+
                 // taint the holes
-                if (y < height)
+                if (holeGrid[x][y] && changeGrid[x][y])
+                    riskFactor[x][y]++;
+
+                if (y < height - 1)
                     if (holeGrid[x][y + 1] && changeGrid[x][y + 1])
                         riskFactor[x][y + 1]++;
 
                 if (y > 0)
-                    if (holeGrid[x][y - 1] && changeGrid[x][y-1])
+                    if (holeGrid[x][y - 1] && changeGrid[x][y - 1])
                         riskFactor[x][y - 1]++;
 
-                if (x < width)
-                    if (holeGrid[x + 1][y] && changeGrid[x+1][y])
+                if (x < width - 1)
+                    if (holeGrid[x + 1][y] && changeGrid[x + 1][y])
                         riskFactor[x + 1][y]++;
 
                 if (x > 0)
-                    if (holeGrid[x - 1][y] && changeGrid[x-1][y])
+                    if (holeGrid[x - 1][y] && changeGrid[x - 1][y])
                         riskFactor[x - 1][y]++;
             }
         }
     }
 
-    const remainingOres = new Set(ores);
+    // Do not mine risky ore until exploration program doing well.
+    const remainingOres = new Set(ores.filter(ore => riskFactor[ore.x][ore.y] == 1 || exploration >= 20));
     const emptyRadars = new Set(radarSpots.filter(s => !radarGrid[s.x][s.y]));
     let radarAvailable = radarCooldown == 0;
     let trapAvailable = trapCooldown == 0;
 
+    // console.error("Remaining ores", remainingOres)
     // console.error(riskFactor);
     for (let { x, y, item, entityId } of bots) {
         // if (entityId != 0) { console.log("WAIT"); continue; }
@@ -169,24 +209,26 @@ while (true) {
             }
 
 
-            if (trapAvailable && [...remainingOres].filter(o => o.ore > 1).length) {
+            if (trapAvailable && [...remainingOres].filter(o => o.ore > 1).length /*&& myScore > opponentScore*/) {
                 console.log("REQUEST TRAP");
                 trapAvailable = false;
                 continue;
             }
         }
 
-        if (bots.filter(({x, entityId: eId}) => x==0 && eId > entityId).length && remainingOres.size == 0 && item == -1) {
-                const earlyDigs = [
-                    {x: 8, y},
-                    {x: 7, y: y-1},
-                    {x: 7, y: y+1},
-                    {x: 7, y},
-                    {x: 6, y},
-                ].filter(({x, y}) => !holeGrid[x][y])
-                console.log(`DIG ${earlyDigs[0].x} ${earlyDigs[0].y}`)
-                continue;
-            }
+        if (bots.filter(({ x, entityId: eId }) => x == 0 && eId > entityId).length && remainingOres.size == 0 && item == -1) {
+            const earlyDigs = allPositions
+                // Don't dig where it's pointless
+                .filter(({ x, y }) => !holeGrid[x][y])
+                .filter(({ x, y }) => riskFactor[x][y] == 1)
+                .filter(({ x, y }) => oreGrid[x][y] != 0)
+                // Dig closer to the middle
+                .filter(({ x,y }) => x > 5);
+
+            const nearest = findNearest({x, y});
+            console.error("No known ore, digging", nearest);
+            remainingOres.add(nearest, earlyDigs);
+        }
 
         // nowhere to place radar
         if (!emptyRadars.size && item == 2) {
@@ -213,7 +255,7 @@ while (true) {
                 }
             case 2: {
                 console.error("Has Radar, go bury it");
-                const spot = findNearest({x, y}, emptyRadars);
+                const spot = findNearest({ x, y }, emptyRadars);
                 console.log(`DIG ${spot.x} ${spot.y}`);
                 emptyRadars.delete(spot);
                 break;
@@ -221,8 +263,9 @@ while (true) {
             case 3: {
                 console.error("Has trap, go bury it");
                 let target = findNearest({ x, y }, [...remainingOres].filter(ore => ore.ore > 1));
-                if (target == DUMMY_POSITION) target = findNearest({ x, y }, remainingOres);
-                console.error("Selected orr", target, riskFactor[target.x][target.y]);
+                const fallback = findNearest({ x, y }, remainingOres);
+                if (target == DUMMY_POSITION || riskFactor[target.x][target.y] > riskFactor[fallback.x][fallback.y]) target = fallback
+                console.error("Selected orr", target);
                 if (target == DUMMY_POSITION) {
                     console.error("Get a radar");
                     console.log(`MOVE 0 ${y}`);
