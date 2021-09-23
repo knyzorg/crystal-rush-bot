@@ -5,25 +5,41 @@
 var inputs = readline().split(' ');
 const width = parseInt(inputs[0]);
 const height = parseInt(inputs[1]); // size of the map
-const oreCache = Array(15).fill(0).map(() => Array(30));
 
-const FAKE_ORE = {
+const DUMMY_POSITION = {
     x: Infinity,
     y: Infinity
 }
+
+// const oreCache = Array(15).fill(0).map(() => Array(30));
+
+const riskFactor = Array(30).fill(0).map(() => Array(15).fill(1));
+const holeGrid = Array(30).fill(0).map(() => Array(15));
+const radarGrid = Array(30).fill(0).map(() => Array(15));
+
+let previousEnemyPositions = new Map();
 
 function getDistance(a, b) {
     return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
 }
 
 function findNearest(start, coords) {
-    let target = FAKE_ORE;
+    let target = DUMMY_POSITION;
+    let currentRisk = Infinity;
+
     for (let end of coords) {
         const newDistance = getDistance(start, end);
+        const newRisk = riskFactor[end.x][end.y];
+        const oldRisk = currentRisk;
         const oldDistance = getDistance(start, target);
-        if (newDistance < oldDistance) target = end;
-    }
 
+        if ((newRisk < oldRisk && newRisk != Infinity) || (newRisk == oldRisk && newDistance < oldDistance)) { 
+            target = end; 
+            currentRisk = newRisk;
+            continue;
+        };
+    }
+    console.error(target, "with risk", currentRisk);
     return target;
 }
 const radarSpots = [];
@@ -43,9 +59,8 @@ while (true) {
     const bots = [];
     const entities = [];
 
-
     const ores = []
-    let holes = [];
+
     for (let y = 0; y < height; y++) {
         var inputs = readline().split(' ');
         for (let x = 0; x < width; x++) {
@@ -53,13 +68,7 @@ while (true) {
             const hole = parseInt(inputs[2 * x + 1]);// 1 if cell has a hole
 
 
-            if (hole) holes.push({
-                x: x,
-                y: y
-            });
-
-            if (ore != '?')
-                oreCache[y][x] = ore;
+            if (hole) holeGrid[x][y] = true;
 
             if (ore != '?' && ore != 0) {
                 ores.push({
@@ -70,7 +79,7 @@ while (true) {
             }
         }
     }
-    console.error(ores);
+    // console.error(ores);
     //console.error(oreCache);
     var inputs = readline().split(' ');
     const entityCount = parseInt(inputs[0]); // number of entities visible to you
@@ -87,22 +96,71 @@ while (true) {
 
 
         entities.push({ entityId, entityType, x, y, item })
+
+        if (entityType == 3) {
+            riskFactor[x][y] = Infinity;
+        }
+        if (entityType == 2) {
+            radarGrid[x][y] = true;
+        }
+
         if (entityType == 0)
             bots.push({
                 x, y, item, entityId
             })
+
+        // Enemy
+        if (entityType == 1) {
+            const { x: oldX, y: oldY } = previousEnemyPositions.get(entityId) || DUMMY_POSITION;
+            previousEnemyPositions.set(entityId, { x, y });
+            // has not moved
+            if (oldX == x && oldY == y) {
+                // taint the holes
+                if (y < height)
+                    if (holeGrid[x][y + 1])
+                        riskFactor[x][y + 1] += 0.25;
+
+                if (y > 0)
+                    if (holeGrid[x][y - 1])
+                        riskFactor[x][y - 1] += 0.25;
+
+                if (x < width)
+                    if (holeGrid[x + 1][y])
+                        riskFactor[x + 1][y] += 0.25;
+
+                if (x > 0)
+                    if (holeGrid[x - 1][y])
+                        riskFactor[x - 1][y] += 0.25;
+            }
+        }
     }
 
     const remainingOres = new Set(ores);
-    const emptyRadars = new Set(radarSpots.filter(s => !holes.find(h => h.x == s.x && h.y == s.y)));
+    const emptyRadars = new Set(radarSpots.filter(s => !radarGrid[s.x][s.y]));
     let radarAvailable = radarCooldown == 0;
+    let trapAvailable = trapCooldown == 0;
+
+    // console.error(riskFactor);
     for (let { x, y, item, entityId } of bots) {
         // if (entityId != 0) { console.log("WAIT"); continue; }
 
-        if (x == 0 && radarAvailable) {
-            console.log("REQUEST RADAR");
-            radarAvailable = false;
-            continue;
+        if (x == -1 && y == -1) { console.log("WAIT"); continue; }
+
+        // Home, pick up item
+        if (x == 0 && item == -1) {
+
+            if (radarAvailable) {
+                console.log("REQUEST RADAR");
+                radarAvailable = false;
+                continue;
+            }
+
+
+            if (trapAvailable && [...remainingOres].filter(o => o.ore > 1).length) {
+                console.log("REQUEST TRAP");
+                trapAvailable = false;
+                continue;
+            }
         }
 
         // nowhere to place radar
@@ -112,32 +170,50 @@ while (true) {
         };
         switch (item) {
             case -1:
-                console.error("Empty-handed, go do work");
-                let target = findNearest({x,y}, remainingOres);
-                console.error("Selected orr", target);
-                if (target == FAKE_ORE) {
-                    console.error("Get a radar");
-                    console.log(`MOVE 0 ${y}`);
-                } else {
-                    console.error("Go dig");
-                    if (--target.ore == 0)
-                        remainingOres.delete(target);
-                    console.log(`DIG ${target.x} ${target.y}`);
+                {
+                    console.error("Empty-handed, go do work");
+                    let target = findNearest({ x, y }, remainingOres);
+                    console.error("Selected orr", target);
+                    if (target == DUMMY_POSITION) {
+                        console.error("Get a radar");
+                        console.log(`MOVE 0 ${y}`);
+                    } else {
+                        console.error("Go dig");
+                        // Uncomment if multiple digs desirable
+                        if (--target.ore == 0)
+                            remainingOres.delete(target);
+                        console.log(`DIG ${target.x} ${target.y}`);
+                    }
+                    break;
                 }
-                break;
-            case 2:
+            case 2: {
                 console.error("Has Radar, go bury it");
                 const { value: spot } = emptyRadars.values().next();
                 console.log(`DIG ${spot.x} ${spot.y}`);
                 emptyRadars.delete(spot);
                 break;
-            case 3:
+            }
+            case 3: {
                 console.error("Has trap, go bury it");
+                let target = findNearest({ x, y }, [...remainingOres].filter(ore => ore.ore > 1));
+                if (target == DUMMY_POSITION) target = findNearest({ x, y }, remainingOres);
+                console.error("Selected orr", target, riskFactor[target.x][target.y]);
+                if (target == DUMMY_POSITION) {
+                    console.error("Get a radar");
+                    console.log(`MOVE 0 ${y}`);
+                } else {
+                    console.error("Go dig");
+                    remainingOres.delete(target);
+                    console.log(`DIG ${target.x} ${target.y}`);
+                }
                 break;
+            }
             case 4:
-                console.error("has crystal, bring it home");
-                console.log(`MOVE 0 ${y}`);
-                break;
+                {
+                    console.error("has crystal, bring it home");
+                    console.log(`MOVE 0 ${y}`);
+                    break;
+                }
         }
     }
 }
