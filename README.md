@@ -18,6 +18,6 @@ My Crystal Rush bot for CodinGame's Crystal Rush
   
 ## Commit History
 
-The commit history is not very meaningful. It is a copy-paste of the submission history from the CodinGame IDE, so there we're any commit messages. I tried annonating them after-the-fact for this repository.
+The commit history is not very meaningful. It is a partial copy-paste of the submission history from the CodinGame IDE, so there weren't any commit messages. 
 
 Some of the commits were me messing around, or breaking syntax and are consequently excluded from the history.
