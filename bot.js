@@ -11,7 +11,7 @@ const DUMMY_POSITION = {
     y: Infinity
 }
 
-// const oreCache = Array(15).fill(0).map(() => Array(30));
+const oreCache = Array(30).fill(0).map(() => Array(15).fill('?'));
 
 const riskFactor = Array(30).fill(0).map(() => Array(15).fill(1));
 const holeGrid = Array(30).fill(0).map(() => Array(15));
@@ -43,11 +43,11 @@ function findNearest(start, coords) {
     return target;
 }
 const radarSpots = [];
-for (let x = 4; x < width; x += 6) {
-    for (let y = 3; y < height; y += 6) {
+for (let x = 7; x < width; x += 7) {
+    for (let y = 5; y < height; y += 7) {
         radarSpots.push({
             x, y
-        })
+        });
     }
 }
 
@@ -60,6 +60,7 @@ while (true) {
     const entities = [];
 
     const ores = []
+    const changeGrid = Array(30).fill(0).map(() => Array(15).fill(false));
 
     for (let y = 0; y < height; y++) {
         var inputs = readline().split(' ');
@@ -68,7 +69,17 @@ while (true) {
             const hole = parseInt(inputs[2 * x + 1]);// 1 if cell has a hole
 
 
-            if (hole) holeGrid[x][y] = true;
+            if (hole) {
+                 if (!holeGrid[x][y]) 
+                    changeGrid[x][y] = true;
+                 holeGrid[x][y] = true 
+            }
+
+            if (ore != '?') {
+                 if (oreCache[x][y] != ore && oreCache[x][y] != '?') 
+                    changeGrid[x][y] = true;
+            }
+            oreCache[x][y] = ore;
 
             if (ore != '?' && ore != 0) {
                 ores.push({
@@ -113,24 +124,26 @@ while (true) {
         if (entityType == 1) {
             const { x: oldX, y: oldY } = previousEnemyPositions.get(entityId) || DUMMY_POSITION;
             previousEnemyPositions.set(entityId, { x, y });
+            // enemy down
+            if (x == -1 && y == -1) continue;
             // has not moved
             if (oldX == x && oldY == y) {
                 // taint the holes
                 if (y < height)
-                    if (holeGrid[x][y + 1])
-                        riskFactor[x][y + 1] += 0.25;
+                    if (holeGrid[x][y + 1] && changeGrid[x][y + 1])
+                        riskFactor[x][y + 1]++;
 
                 if (y > 0)
-                    if (holeGrid[x][y - 1])
-                        riskFactor[x][y - 1] += 0.25;
+                    if (holeGrid[x][y - 1] && changeGrid[x][y-1])
+                        riskFactor[x][y - 1]++;
 
                 if (x < width)
-                    if (holeGrid[x + 1][y])
-                        riskFactor[x + 1][y] += 0.25;
+                    if (holeGrid[x + 1][y] && changeGrid[x+1][y])
+                        riskFactor[x + 1][y]++;
 
                 if (x > 0)
-                    if (holeGrid[x - 1][y])
-                        riskFactor[x - 1][y] += 0.25;
+                    if (holeGrid[x - 1][y] && changeGrid[x-1][y])
+                        riskFactor[x - 1][y]++;
             }
         }
     }
@@ -163,6 +176,18 @@ while (true) {
             }
         }
 
+        if (bots.filter(({x, entityId: eId}) => x==0 && eId > entityId).length && remainingOres.size == 0 && item == -1) {
+                const earlyDigs = [
+                    {x: 8, y},
+                    {x: 7, y: y-1},
+                    {x: 7, y: y+1},
+                    {x: 7, y},
+                    {x: 6, y},
+                ].filter(({x, y}) => !holeGrid[x][y])
+                console.log(`DIG ${earlyDigs[0].x} ${earlyDigs[0].y}`)
+                continue;
+            }
+
         // nowhere to place radar
         if (!emptyRadars.size && item == 2) {
             console.error("Nowhere to place radar, going to dig")
@@ -188,7 +213,7 @@ while (true) {
                 }
             case 2: {
                 console.error("Has Radar, go bury it");
-                const { value: spot } = emptyRadars.values().next();
+                const spot = findNearest({x, y}, emptyRadars);
                 console.log(`DIG ${spot.x} ${spot.y}`);
                 emptyRadars.delete(spot);
                 break;
@@ -203,6 +228,8 @@ while (true) {
                     console.log(`MOVE 0 ${y}`);
                 } else {
                     console.error("Go dig");
+                    // Uncomment if multiple digs desirable
+                    // if (--target.ore == 0)
                     remainingOres.delete(target);
                     console.log(`DIG ${target.x} ${target.y}`);
                 }
